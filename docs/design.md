@@ -31,7 +31,7 @@ peer-identiteit los van de levenscyclus van een applicatie.
 | Group ID | `moza-fbs-test` |
 | Directory-OIN | `00000000000000000010` |
 | Endpoints (PKI) | `manager`, `outway`, `inway`, `controller`, `txlog` |
-| FSC-images (pin) | `v2.5.2` |
+| FSC-images (pin) | `v2.9.0`, gelijk aan `openfsc_min_version` van moza-fsc-testnet |
 | ZAD-project | `MOZa FSC Peer` (technisch: `mfp-z64`) |
 | ZAD-deployment | `fsc-moza` |
 | ZAD-componenten | `moza-fscmgr`, `moza-fscoutway`, `moza-fscinway`, `moza-fscctl`, `moza-fsctxlog`, `moza-fscpg` |

@@ -4,8 +4,9 @@
 # debugging; de doorlopende image-tag-updates lopen via .github/workflows/deploy.yml.
 #
 # deploy/zad/README.md beschrijft de achtergrond: het eigen ZAD-project `MOZa FSC Peer`, de
-# uitvoervolgorde (certs -> deployment handmatig aanmaken -> plan/validate/apply -> UI-only
-# cert-attachments), de self-hosted Postgres-opzet en alle ZAD_*-env-vars met hun defaults.
+# uitvoervolgorde (certs uit moza-fsc-testnet -> deployment handmatig aanmaken ->
+# plan/validate/apply -> bijlagen en publicatie op het web), de self-hosted Postgres-opzet en alle
+# ZAD_*-env-vars met hun defaults.
 # Afgeleid van de peer `logius` in MinBZK/moza-poc-fbs-berichtenbox (demo/environment/logius).
 #
 # Twee valkuilen die het gedrag van dit script bepalen:
@@ -28,9 +29,10 @@
 #   ./deploy/zad/upsert-peer.sh apply  [deployment] [tag]         # muteert + pollt tasks
 set -euo pipefail
 
-MODE="${1:?usage: upsert-peer.sh <validate|plan|apply> [deployment=fsc-moza] [tag=v2.5.2]}"
+MODE="${1:?usage: upsert-peer.sh <validate|plan|apply> [deployment=fsc-moza] [tag=v2.9.0]}"
 DEPLOYMENT="${2:-${ZAD_DEPLOYMENT:-fsc-moza}}"  # arg wint; anders ZAD_DEPLOYMENT (spoort met pki/gen-csr.sh)
-IMAGE_TAG="${3:-v2.5.2}"                          # OpenFSC-versie: outway/inway stock-image + default-tag voor de migrate-wrappers
+# Gelijk aan openfsc_min_version van moza-fsc-testnet: een andere versie valt stil uit de group.
+IMAGE_TAG="${3:-v2.9.0}"
 MANAGER_TAG="${ZAD_MANAGER_TAG:-${IMAGE_TAG}}"       # migrate-wrappers (ghcr) mogen een eigen tag hebben
 CONTROLLER_TAG="${ZAD_CONTROLLER_TAG:-${IMAGE_TAG}}"
 TXLOG_TAG="${ZAD_TXLOG_TAG:-${IMAGE_TAG}}"

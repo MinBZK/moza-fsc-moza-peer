@@ -1,17 +1,25 @@
 # Cert-attachments op ZAD — peer moza
 
-> Draaiboek voor de operator: de cert-attachments mounten. Uit te voeren ná `pki/issue.sh` (zie
-> `pki/README.md`) en rond `upsert-peer.sh apply`.
+> Draaiboek voor de operator: de cert-attachments mounten. Uit te voeren nadat de beheerder van
+> moza-fsc-testnet de certs heeft uitgegeven (zie `pki/README.md`), en na `upsert-peer.sh apply`.
 
-## Waarom UI-only
+## UI of API
 
-De ZAD v2 Operations Manager API dekt deployment + componenten (image, env_vars, aliases,
-services) maar **geen bijlagen** — net als repo A's directory-deploy
-(`deploy/zad/upsert-directory.sh`, zie de header-comment daar). Cert-mounts op
-`/etc/fsc/...`-paden gaan dus via de ZAD-UI, per component, als losse attachment-bestanden
-(geen `combined.pem` nodig — zie `pki/zad-bundle.sh`, modus 2/passthrough).
+Bijlagen kunnen in de ZAD-UI, per component, of via de v2 Operations Manager API. Het zijn losse
+bestanden op hun `/etc/fsc/...`-pad; een `combined.pem` is niet nodig (modus 2/passthrough).
 
-## Twee cert-mount-valkuilen (UI-only attachments op `/etc/fsc/...`)
+Via de API (header `X-API-Key`, basis `https://zad.rijksapp.nl/api/v2/projects/mfp-z64`):
+
+- `POST /services/attachments/component/<component>/attachment?rollout=false`, multipart met
+  `attachment_id`, `file`, `provide-as=file` en `path`. Een bestand dat meer componenten
+  gebruiken (group-root, CRL, internal-root) upload je één keer; daarna koppel je het met
+  `reference=<attachment_id>` in plaats van `file`.
+- `PUT /services/publish-on-web/config/component/<component>?rollout=false` met
+  `{"tls":"passthrough"}`, voor `moza-fscmgr` en `moza-fscinway`.
+- `POST /:refresh` rolt alles uit wat met `rollout=false` is opgeslagen; `GET /pending-rollout`
+  telt wat nog openstaat.
+
+## Twee cert-mount-valkuilen (bijlagen op `/etc/fsc/...`)
 
 - **Internal-pad** (`/etc/fsc/internal/moza/<endpoint>/`) → de **internal**-cert (getekend door
   de per-peer internal-CA). Group-cert daar mounten geeft `certificate is signed by 'Intermediate
@@ -24,27 +32,19 @@ services) maar **geen bijlagen** — net als repo A's directory-deploy
 
 ## Volgorde
 
-0. **Group-CA plaatsen (NIET `init-ca.sh`).** Voor de échte directory moet de group-leaf ketenen
-   naar fsc-testnet's group-root. Zet fsc-testnet's `ca/root.pem` + `ca/intermediate.pem` (+ keys)
-   in `pki/ca/` — draai `init-ca.sh` **niet** (dat maakt een verse, vreemde CA). De
-   INTERNAL-CA blijft wél lokaal/self-signed (die maakt `issue.sh` per-peer aan).
-1. `pki/issue.sh` (vereist `cfssl`) — genereert `pki/out/moza/*` (group,
-   getekend door fsc-testnet's intermediate) en `pki/internal/moza/*` (internal).
-   **Let op (multi-poort-fix, 2026-07-13):** de internal-cert-SAN's bevatten nu ook de
-   cluster-interne Service-DNS (`fsc-moza-moza-<comp>` +
-   `fsc-moza-moza-<comp>.rig-prd-mfp-z64.svc.cluster.local`), waarnaar het interne mTLS-verkeer
-   verbindt. Draaide je `issue.sh` vóór deze wijziging, geef de certs dan opnieuw uit met `issue.sh -f`
-   (anders faalt de hostnaamverificatie op `fsc-moza-moza-fscmgr:9443` enz.) en upload de verse
-   set opnieuw.
-2. `pki/zad-bundle.sh moza` (hangt af van stap 1) — verzamelt de
-   upload-klare set in `pki/zad-upload/moza/` met een eigen `MANIFEST.md`
-   (bestand → pod-pad → `TLS_*`-env-var, zie dat script voor de exacte `env_for()`-mapping).
+1. **Certs uit moza-fsc-testnet**, niet uit `init-ca.sh` of `issue.sh` hier. De group-certs
+   tekent de beheerder van het testnet; de internal-certs komen van de internal-CA van deze peer,
+   waarvan de sleutel ook in de geheime repo van het testnet staat.
+2. In moza-fsc-testnet: `pki/geheimen.sh ophalen moza` en `pki/zad-bundle.sh moza`. Dat verzamelt
+   de upload-klare set in `pki/zad-upload/moza/` met een eigen `MANIFEST.md`
+   (bestand → pod-pad → `TLS_*`-env-var). Ruim die map na het uploaden op met
+   `pki/geheimen.sh wis moza`.
 3. Per component (`moza-fscmgr`, `moza-fscctl`, `moza-fscoutway`, `moza-fscinway`,
-   `moza-fsctxlog`) in de ZAD-UI: bijlage toevoegen op het `/etc/fsc/...`-pad uit de tabellen
-   hieronder, met de bestandsinhoud uit stap 2's upload-set. De paden zijn identiek aan de
-   `TLS_*`-waarden die `upsert-peer.sh` al als `env_vars`/`aliases` naar de component stuurt — de
-   attachment moet dus exact op dat pad gemount worden, anders faalt de container-boot met een
-   ontbrekend-bestand-fout.
+   `moza-fsctxlog`), in de ZAD-UI of via de API (zie boven): bijlage toevoegen op het
+   `/etc/fsc/...`-pad uit de tabellen hieronder, met de bestandsinhoud uit stap 2's upload-set.
+   De paden zijn identiek aan de `TLS_*`-waarden die `upsert-peer.sh` al als `env_vars`/`aliases`
+   naar de component stuurt — de attachment moet dus exact op dat pad gemount worden, anders
+   faalt de container-boot met een ontbrekend-bestand-fout.
 
 ## moza-fscmgr (manager)
 
@@ -135,7 +135,8 @@ Verder geen bijlagen op moza-fscpg. Het wachtwoord komt uit `ZAD_PG_PASSWORD` (e
 
 **Persistentie:** zonder gekoppeld persistent volume is de DB ephemeral — bij een nieuwe pod draait het
 init-script opnieuw en zijn de tabellen leeg (manager/controller/txlog migreren vanzelf via hun wrapper).
-Voor een blijvende peer: een persistent volume op `PGDATA` koppelen.
+Voor een blijvende peer: een persistent volume koppelen op `/var/lib/postgresql/data`, de map boven
+`PGDATA` (`…/data/pgdata`), zodat een `lost+found` op het volume initdb niet tegenhoudt.
 
 **Schema-namen moeten sporen** met `ZAD_MGR_SCHEMA`/`ZAD_TXLOG_SCHEMA` in `upsert-peer.sh` (defaults
 `manager`/`txlog`) — dat zijn de search_path-schema's die het init-script aanmaakt. `ZAD_CTL_SCHEMA` is

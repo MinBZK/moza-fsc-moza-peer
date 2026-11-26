@@ -1,7 +1,11 @@
 # Doorlopende image-tag-updates van de FSC-peer `moza` in het ZAD-project `MOZa FSC Peer`
 # (mfp-z64), deployment `fsc-moza`. Doet ALLEEN tag-updates: de eenmalige creatie van de
-# componenten (env/ports) loopt via deploy/zad/upsert-peer.sh, de cert-attachments via de UI
-# (deploy/zad/cert-manifest.md).
+# componenten (env/ports) loopt via deploy/zad/upsert-peer.sh, de bijlagen via
+# de UI of de API (deploy/zad/cert-manifest.md).
+#
+# De versie moet gelijk zijn aan `openfsc_min_version` in moza-fsc-testnet
+# (group/group-config.yaml): een peer op een andere versie rekent andere
+# contract-hashes en valt zonder foutmelding uit de group.
 name: Deploy FSC-peer naar ZAD
 
 on:
@@ -10,7 +14,7 @@ on:
       fsc-version:
         description: OpenFSC-versie (outway/inway stock-image + migrate-wrappers)
         required: true
-        default: v2.5.2
+        default: v2.9.0
 
 permissions:
   contents: read

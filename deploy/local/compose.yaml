@@ -11,7 +11,7 @@
 # Elke service krijgt `TZ: Europe/Amsterdam`, zodat logtijden overeenkomen met de klok van wie
 # meekijkt. De meeste FSC-images hebben geen tijdzonedatabase en loggen daardoor toch in UTC; de
 # regel staat er zodat een image dat er wél een krijgt, meteen goed staat.
-x-manager-image: &manager-image docker.io/federatedserviceconnectivity/manager:${IMAGE_TAG:-v2.5.2}
+x-manager-image: &manager-image docker.io/federatedserviceconnectivity/manager:${IMAGE_TAG:-v2.9.0}
 x-manager-common-env: &manager-common-env
   LOG_TYPE: local
   LOG_LEVEL: debug
@@ -86,7 +86,7 @@ services:
   manager-directory:
     # ZAD-artefact: wrapper-image (migrate->serve in de entrypoint). Repo A bouwt dit lokaal uit
     # een build-context die in deze repo niet bestaat; hier daarom het kant-en-klare ghcr-image.
-    image: ghcr.io/minbzk/moza-fsc-testnet-manager-migrate:${IMAGE_TAG:-v2.5.2}
+    image: ghcr.io/minbzk/moza-fsc-testnet-manager-migrate:${IMAGE_TAG:-v2.9.0}
     restart: on-failure   # migreert bij boot; herstart bij transiënte DB-race (parity met siblings)
     # Draai als de host-UID/GID zodat de pod de 0600-privékeys leest (matching owner)
     # i.p.v. ze open te zetten. HOST_UID/HOST_GID uit .env (zie README, stap 3).
@@ -189,7 +189,7 @@ services:
         condition: service_started
 
   outway-moza:
-    image: docker.io/federatedserviceconnectivity/outway:${IMAGE_TAG:-v2.5.2}
+    image: docker.io/federatedserviceconnectivity/outway:${IMAGE_TAG:-v2.9.0}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # host-UID -> leest 0600-keys
     restart: on-failure                            # boot-race met de eigen manager
     command:
@@ -247,7 +247,7 @@ services:
         condition: service_started
 
   inway-moza:
-    image: docker.io/federatedserviceconnectivity/inway:${IMAGE_TAG:-v2.5.2}
+    image: docker.io/federatedserviceconnectivity/inway:${IMAGE_TAG:-v2.9.0}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # host-UID -> leest 0600-keys
     restart: on-failure                            # boot-race met controller/manager
     command:
@@ -320,7 +320,7 @@ services:
     command: ["-listen=:8080", "-text=hello from moza echo-service stub-upstream"]
 
   directory-ui:
-    image: docker.io/federatedserviceconnectivity/directory-ui:${IMAGE_TAG:-v2.5.2}
+    image: docker.io/federatedserviceconnectivity/directory-ui:${IMAGE_TAG:-v2.9.0}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # host-UID -> leest 0600-group-key
     ports:
       - "127.0.0.1:8081:8080"
@@ -345,7 +345,7 @@ services:
         condition: service_started
 
   migrate-controller-moza:
-    image: docker.io/federatedserviceconnectivity/controller:${IMAGE_TAG:-v2.5.2}
+    image: docker.io/federatedserviceconnectivity/controller:${IMAGE_TAG:-v2.9.0}
     environment:
       TZ: Europe/Amsterdam
     command:
@@ -360,7 +360,7 @@ services:
     restart: on-failure
 
   controller-moza:
-    image: docker.io/federatedserviceconnectivity/controller:${IMAGE_TAG:-v2.5.2}
+    image: docker.io/federatedserviceconnectivity/controller:${IMAGE_TAG:-v2.9.0}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # host-UID -> leest 0600-internal-key
     restart: on-failure                           # herstart bij transiënte boot-fout (DB/manager nog niet klaar)
     ports:
@@ -407,7 +407,7 @@ services:
 
   # ---- transaction-log API (per peer) ----------------------------------------------------------
   migrate-txlog-moza:
-    image: docker.io/federatedserviceconnectivity/txlog-api:${IMAGE_TAG:-v2.5.2}
+    image: docker.io/federatedserviceconnectivity/txlog-api:${IMAGE_TAG:-v2.9.0}
     # `migrate up` leest de DSN ALLEEN uit --postgres-dsn (niet uit env, anders dan serve) — net als
     # de manager/controller-migrates. Zonder de vlag verbindt migrate met een default en hangt 't.
     command: [/usr/local/bin/txlog-api, migrate, up, --postgres-dsn,
@@ -423,7 +423,7 @@ services:
     restart: on-failure
 
   txlog-moza:
-    image: docker.io/federatedserviceconnectivity/txlog-api:${IMAGE_TAG:-v2.5.2}
+    image: docker.io/federatedserviceconnectivity/txlog-api:${IMAGE_TAG:-v2.9.0}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # host-UID -> leest de 0600-internal-key
     command: [/usr/local/bin/txlog-api, serve]
     restart: on-failure                            # boot-race met postgres/migrate
