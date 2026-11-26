@@ -50,10 +50,11 @@ losse ketens, zodat de manager zowel extern (mesh, group-trust) als intern
   ZAD-topologie-env afgeleid — wijzig het project via `ZAD_PROJECT`, niet door de csr's met de hand
   te bewerken.
 
-## Uitvoeren (vereist cfssl)
+## Lokaal uitvoeren (vereist cfssl)
 
-Genereer de certs met `cfssl`. Het CA-materiaal (`ca/root.pem`, `ca/intermediate.pem` + keys) staat
-niet in git (`pki/ca/` is gitignored) — het is het resultaat van deze stappen:
+Voor de lokale proof genereer je de certs met `cfssl`; voor ZAD zie hieronder. Het CA-materiaal
+(`ca/root.pem`, `ca/intermediate.pem` + keys) staat niet in git (`pki/ca/` is gitignored) — het
+is het resultaat van deze stappen:
 
 ```bash
 cd pki
@@ -65,12 +66,15 @@ cd pki
 
 > **Projectwissel is env-var-only.** Draait de peer in een ander ZAD-project/deployment, zet dan
 > `ZAD_PROJECT` (evt. `ZAD_DEPLOYMENT`/`ZAD_BASE_DOMAIN`/`ZAD_NAMESPACE`) en her-genereer + geef
-> opnieuw uit — geen handmatige csr-edits. `issue.sh` roept `gen-csr.sh` zelf aan, dus:
+> opnieuw uit — geen handmatige csr-edits:
 >
 > ```bash
-> export ZAD_PROJECT=ander-project        # dezelfde env als deploy/zad/upsert-peer.sh
-> cd pki && ./issue.sh -f && ./gen-crl.sh && ./verify.sh && ./zad-bundle.sh moza
+> export ZAD_PROJECT=ander-project
+> cd pki && ./gen-csr.sh
 > ```
+>
+> Gebruik dezelfde env als `deploy/zad/upsert-peer.sh`. De nieuwe csr's gaan daarna naar de
+> beheerder van moza-fsc-testnet om te tekenen (zie hieronder).
 >
 > De SAN's in de nieuwe csr's (git-diff) en de adressen die `upsert-peer.sh` deployt sporen dan per
 > definitie, want beide lezen dezelfde `ZAD_*`-vars.
@@ -82,10 +86,13 @@ cd pki
 > - **Lokale compose-proof** (`deploy/local/`): geïsoleerde mesh, dus `init-ca.sh` genereert
 >   een eigen group root+intermediate. Prima — alle deelnemers vertrouwen dezelfde lokale root.
 > - **ZAD, aangesloten op de fsc-testnet-directory** (`deploy/zad/`): de group-leaf van
->   moza moet ketenen naar **fsc-testnet's** group-root (anders vertrouwt de directory de
->   peer niet). Draai `init-ca.sh` dan **niet**; zet fsc-testnet's `ca/root.pem` +
->   `ca/intermediate.pem` (+ keys) in `pki/ca/` en draai alleen `issue.sh` (stap 2-4). De
->   INTERNAL-CA blijft hoe dan ook lokaal/self-signed per-peer.
+>   moza moet ketenen naar de group-root van moza-fsc-testnet. Die certs geeft de beheerder van
+>   het testnet uit, volgens [stap 3 van het aansluit-runbook][testnet-stap3].
+>   Draai daarvoor hier niet `init-ca.sh` of `issue.sh`. De openbare certs staan in
+>   moza-fsc-testnet (`pki/out/moza/`, `pki/internal/moza/`), de sleutels versleuteld in de
+>   geheime repo van het testnet. De upload-set maak je daar met `pki/zad-bundle.sh moza`.
+>   Zet de intermediate-sleutel van het testnet nooit in deze repo: daarmee kun je certs
+>   uitgeven voor elke OIN in de group.
 
 Controleer daarna dat de OIN in het certificaat zit:
 
@@ -106,3 +113,5 @@ for f in pki/peers/moza/*/csr.json; do
 done
 jq . pki/config.json pki/internal-ca.json >/dev/null && echo "json OK"
 ```
+
+[testnet-stap3]: https://github.com/MinBZK/moza-fsc-testnet/blob/main/docs/peer-aansluiten.md#3-certificaten

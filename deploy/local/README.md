@@ -127,7 +127,7 @@ deel van de stack — de manager announce't ook prima terwijl outway, inway, con
 crash-loopen, want die worden lui gedialed — en een inway die herhaaldelijk crasht en herstart
 vóórdat de poll in `publish-service.sh` slaagt, blijft eveneens onzichtbaar. Zo zou het
 geaccepteerde `:9444`-risico zich manifesteren: de inway gebruikt
-`MANAGER_INTERNAL_UNAUTHENTICATED_ADDRESS` (`:9444`), en als `fsc-inway serve` v2.5.2 tóch de
+`MANAGER_INTERNAL_UNAUTHENTICATED_ADDRESS` (`:9444`), en als `fsc-inway serve` tóch de
 authenticated `:9443` blijkt te eisen, faalt de boot daar zichtbaar terwijl de rest groen blijft.
 `smoke-services.sh` leest daarom de containerstatus uit en dumpt de laatste logregels van wat niet
 draait. Juist die componenten hernummert de hostnet-overlay van poort, dus een fout daarin moet

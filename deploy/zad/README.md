@@ -7,27 +7,33 @@ in het **eigen ZAD-project `MOZa FSC Peer`** (technische naam **`mfp-z64`**), de
 om diensten aan te bieden, de outway om diensten af te nemen. Bouwt voort op `pki/` (certs) en
 `deploy/local/` (lokale compose-proof van dezelfde peer).
 
-> **Group-CA komt uit `moza-fsc-testnet`, niet uit `init-ca.sh`.** Om aan te sluiten op de
-> échte directory moet de group-leaf van moza ketenen naar de group-root van fsc-testnet. Draai
-> daarom voor ZAD **niet** `pki/init-ca.sh` (dat maakt een verse, vreemde CA); zet in plaats
-> daarvan fsc-testnet's `ca/root.pem` + `ca/intermediate.pem` (+ keys) in `pki/ca/` en draai
-> alleen `issue.sh`. Zie `pki/README.md`.
+> **Certs komen uit `moza-fsc-testnet`.** De group-certs voor ZAD geeft de beheerder van het
+> testnet uit; zie `pki/README.md`. Draai voor ZAD hier niet `pki/init-ca.sh` of `pki/issue.sh`,
+> en zet de CA-sleutel van het testnet niet in deze repo.
+
+**Stand (26 november 2026).** De peer draait op ZAD en is aangemeld bij de directory. Stap 1–7
+zijn gedaan: de certs in moza-fsc-testnet, de componenten via de v2-API met dezelfde env als
+`upsert-peer.sh`. Draai `apply` niet opnieuw: de componenten bestaan al, en env wordt alleen bij het
+aanmaken toegepast. De live certs zijn getekend uit templates met `O=MOZa FSC peer` en alleen de
+ZAD-namen, niet uit `pki/peers/moza/`; over de naam wordt nog besloten. Stap 9 en 10 staan nog
+open.
 
 ## Inhoud
 
 | Bestand | Rol |
 |---------|-----|
 | `upsert-peer.sh` | `validate`/`plan`/`apply` tegen de ZAD v2 Operations Manager API — voor de eenmalige component-creatie (env/ports) en voor debugging. |
-| `cert-manifest.md` | Runbook: welk cert-bestand op welk `/etc/fsc/...`-pad, per component (UI-only bijlagen). |
-| `postgres-init.sql` | Init-script voor `moza-fscpg` (schema's `manager` en `txlog`); UI-bijlage op `/docker-entrypoint-initdb.d/10-schemas.sql`. |
+| `cert-manifest.md` | Runbook: welk cert-bestand op welk `/etc/fsc/...`-pad, per component (bijlagen via UI of API). |
+| `postgres-init.sql` | Init-script voor `moza-fscpg` (schema's `manager` en `txlog`); bijlage op `/docker-entrypoint-initdb.d/10-schemas.sql`. |
 | `verify-zad.md` | Runbook: announce en vervolgstappen ná een geslaagde apply, + de acceptatiecriteria. |
 | `../../.github/workflows/deploy.yml` | Doorlopende image-tag-updates van de zes componenten (handmatig te starten). Niet de eenmalige creatie (die doet `upsert-peer.sh`). |
 
 ## Volgorde
 
-1. **Certs** — `pki/issue.sh` → `pki/verify.sh` (vereist `cfssl`; zie `pki/README.md`). **Niet**
-   `pki/init-ca.sh` — zie de callout hierboven.
-2. **Bundle** — `pki/zad-bundle.sh moza` → upload-klare cert-set in `pki/zad-upload/moza/`.
+1. **Certs** — de beheerder van moza-fsc-testnet tekent de csr's uit `pki/peers/moza/`; zie de
+   callout hierboven.
+2. **Bundle** — in moza-fsc-testnet: `pki/geheimen.sh ophalen moza` en `pki/zad-bundle.sh moza`
+   → upload-klare cert-set in `pki/zad-upload/moza/` daar.
 3. **Deployment `fsc-moza` éénmalig leeg aanmaken** (ZAD-UI of `zadctl`, project `mfp-z64`). De
    raw v2-API `:upsert-deployment` maakt géén NIEUWE deployment aan (geeft wel 202 maar het
    deployment verschijnt niet in `/deployments`); het UPDATET alleen een bestaand deployment.
@@ -36,9 +42,10 @@ om diensten aan te bieden, de outway om diensten af te nemen. Bouwt voort op `pk
 5. **`upsert-peer.sh validate`** (vereist `ZAD_API_KEY`) — read-only auth-check tegen de ZAD-API.
 6. **`upsert-peer.sh apply`** (vereist `ZAD_API_KEY`, `ZAD_PG_PASSWORD`, `ZAD_CSRF_AUTH_KEY`) —
    upsert het deployment + de zes componenten, pollt de resulterende tasks.
-7. **UI-mount** (zie `cert-manifest.md`) — cert-attachments, het Postgres-init-script en
-   "Publicatie op het web" (passthrough-TLS op `moza-fscmgr` en `moza-fscinway`) zijn UI-only; de
-   v2-API dekt dit niet.
+7. **Bijlagen en publicatie** (zie `cert-manifest.md`) — cert-bijlagen, het Postgres-init-script,
+   een persistent volume voor `moza-fscpg` en "Publicatie op het web" (passthrough-TLS op
+   `moza-fscmgr` en `moza-fscinway`). Kan in de UI of via de v2-API; de calls staan in
+   `cert-manifest.md`.
 8. **`verify-zad.md`** — announce en de vervolgstappen.
 9. **Gezondheidscontrole** — de eerste poort van manager, inway, outway en txlog is een
    TLS-luisteraar; de standaard-TCP-probe van ZAD laat daar elke twee seconden een
