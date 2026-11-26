@@ -1,0 +1,21 @@
+{
+  "CN": "manager.moza.fsc-test.local",
+  "key": {
+    "algo": "rsa",
+    "size": 4096
+  },
+  "hosts": [
+    "moza.fsc-test.local",
+    "manager.moza.fsc-test.local",
+    "moza-fscmgr-fsc-moza-mfp-z64.rig.prd1.gn2.quattro.rijksapps.nl",
+    "fsc-moza-moza-fscmgr",
+    "fsc-moza-moza-fscmgr.rig-prd-mfp-z64.svc.cluster.local"
+  ],
+  "serialnumber": "00000000000000002000",
+  "names": [
+    {
+      "O": "MOZa",
+      "C": "NL"
+    }
+  ]
+}

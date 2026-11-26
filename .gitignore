@@ -1,0 +1,21 @@
+# Sleutels en certs horen niet in git (zie pki/README.md)
+pki/ca/
+pki/out/
+pki/internal/
+pki/zad-upload/
+*.pem
+*.key
+*.csr
+
+# Lokale harness
+deploy/local/.env
+deploy/local/.modus
+
+# ZAD
+.env
+.env.zadctl
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
