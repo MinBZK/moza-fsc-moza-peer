@@ -14,9 +14,8 @@ om diensten aan te bieden, de outway om diensten af te nemen. Bouwt voort op `pk
 **Stand (26 november 2026).** De peer draait op ZAD en is aangemeld bij de directory. Stap 1–7
 zijn gedaan: de certs in moza-fsc-testnet, de componenten via de v2-API met dezelfde env als
 `upsert-peer.sh`. Draai `apply` niet opnieuw: de componenten bestaan al, en env wordt alleen bij het
-aanmaken toegepast. De live certs zijn getekend uit templates met `O=MOZa FSC peer` en alleen de
-ZAD-namen, niet uit `pki/peers/moza/`; over de naam wordt nog besloten. Stap 9 en 10 staan nog
-open.
+aanmaken toegepast. De certs zijn getekend uit `pki/peers/moza/`, met `O=MOZa`. Stap 9 en 10
+staan nog open.
 
 ## Inhoud
 
