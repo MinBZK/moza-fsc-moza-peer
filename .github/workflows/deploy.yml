@@ -1,0 +1,53 @@
+# Doorlopende image-tag-updates van de FSC-peer `moza` in het ZAD-project `MOZa FSC Peer`
+# (mfp-z64), deployment `fsc-moza`. Doet ALLEEN tag-updates: de eenmalige creatie van de
+# componenten (env/ports) loopt via deploy/zad/upsert-peer.sh, de cert-attachments via de UI
+# (deploy/zad/cert-manifest.md).
+name: Deploy FSC-peer naar ZAD
+
+on:
+  workflow_dispatch:
+    inputs:
+      fsc-version:
+        description: OpenFSC-versie (outway/inway stock-image + migrate-wrappers)
+        required: true
+        default: v2.5.2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zad-fsc-moza
+  cancel-in-progress: false
+
+env:
+  ZAD_PROJECT: mfp-z64
+  ZAD_DEPLOYMENT: fsc-moza
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: test
+    steps:
+      - name: Valideer versie
+        env:
+          FSC_VERSION: ${{ inputs.fsc-version }}
+        run: |
+          case "$FSC_VERSION" in ""|*[!A-Za-z0-9._-]*) echo "ongeldige versie: '$FSC_VERSION'"; exit 1 ;; esac
+
+      - name: Deploy fsc-moza
+        uses: RijksICTGilde/zad-actions/deploy@0b604742a137d43f6fe8fceb06bdffeb0a1665db # v4.4.1
+        with:
+          api-key: ${{ secrets.ZAD_API_KEY }}
+          project-id: ${{ env.ZAD_PROJECT }}
+          deployment-name: ${{ env.ZAD_DEPLOYMENT }}
+          components: |
+            [
+              {"name": "moza-fscpg", "image": "docker.io/library/postgres:17"},
+              {"name": "moza-fscmgr", "image": "ghcr.io/minbzk/moza-fsc-testnet-manager-migrate:${{ inputs.fsc-version }}"},
+              {"name": "moza-fscctl", "image": "ghcr.io/minbzk/moza-fsc-testnet-controller-migrate:${{ inputs.fsc-version }}"},
+              {"name": "moza-fscoutway", "image": "docker.io/federatedserviceconnectivity/outway:${{ inputs.fsc-version }}"},
+              {"name": "moza-fscinway", "image": "docker.io/federatedserviceconnectivity/inway:${{ inputs.fsc-version }}"},
+              {"name": "moza-fsctxlog", "image": "ghcr.io/minbzk/moza-fsc-testnet-txlog-migrate:${{ inputs.fsc-version }}"}
+            ]

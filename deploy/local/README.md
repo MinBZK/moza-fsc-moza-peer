@@ -1,0 +1,323 @@
+# Lokale FSC-harness — directory + peer moza
+
+Runnable shift-left van de ZAD-deploy: een lokale FSC-directory + de peer `moza`
+(manager + outway + inway + controller + txlog + eigen DB's) + een SNI-router op `:443`. Bewijst dat
+`moza` zich aanmeldt (announce) bij de directory en een (stub-)dienst `echo-service` kan
+publiceren die vervolgens vindbaar is (publicatie, discovery). Geen
+OIDC-login-voorziening — dat blijft buiten scope voor deze peer-harness. Bouwt voort op `pki/`
+(zie dat README voor het cert-contract).
+
+> **Vereist Docker of podman, `docker compose` (v2) en gegenereerde certs** (`pki/issue.sh`,
+> vereist `cfssl`). Draai eerst de PKI in `pki/`, dan de stack + smoke hieronder.
+
+> **Alleen op je eigen machine.** De harness draait met defaults die nergens anders horen:
+> postgres met `postgres/postgres`, de controller met `AUTHN_TYPE=none` en
+> `CSRF_PROTECTION_ENABLED=false`, en `DISABLE_CRL_CHECKS=true`. Onder bridge zitten die achter een
+> eigen containernetwerk; onder de hostnet-overlay staan ze op de loopback van de machine en zijn
+> ze bereikbaar voor elk lokaal proces en elke lokale gebruiker. Onder die overlay draaien de
+> cert-lezende containers bovendien in jouw UID (`keep-id`) én in jouw netwerk-namespace: de grens
+> tussen container en host is daar dunner dan de standaard rootless-mapping. Niet draaien op een
+> gedeelde of multi-user machine, en niet op een bastion- of VPN-host.
+
+## Benodigdheden
+
+- **Docker** + `docker compose` (v2), of **podman** met `docker compose` ≥ 2.24.4 tegen de
+  podman-socket. `deploy/local/up.sh` kiest zelf de compose-bestanden die daarbij horen — zie
+  [Starten en modi](#starten-en-modi).
+- Gegenereerde certs uit `pki/` — draai daar eerst `./init-ca.sh`, `./issue.sh`,
+  `./gen-crl.sh` en `./verify.sh` (zie `pki/README.md`, sectie "Uitvoeren"). Zonder certs
+  faalt elke container die `/pki` mount bij boot (ontbrekend bestand).
+- **jq** (host-side) — `publish-service.sh` en `smoke-discover.sh` lezen er de API-antwoorden mee.
+
+## Draaiboek
+
+Alle commando's vanuit de **repo-root**.
+
+```bash
+# 1. Genereer de PKI voor moza (zie pki/README.md).
+cd pki
+./init-ca.sh
+./issue.sh
+./gen-crl.sh
+./verify.sh          # verwacht: "== ALLE ASSERTS GROEN =="
+cd -
+
+# 2. Harness-env. De cert-lezende containers draaien als JOUW UID/GID, zodat ze de
+#    0600-privékeys via de owner-bit lezen (keys blijven dicht).
+cp deploy/local/.env.example deploy/local/.env
+printf 'HOST_UID=%s\nHOST_GID=%s\n' "$(id -u)" "$(id -g)" >> deploy/local/.env
+
+# 3. Start de stack. Het script kiest de modus (docker, bridge of hostnet), legt hem vast en
+#    wacht tot smoke-services.sh groen is.
+./deploy/local/up.sh
+
+# 4. Draai de smoke.
+./deploy/local/run-smokes.sh    # verwacht: "ALLE SMOKES GROEN."
+```
+
+Losse smokes (voor gerichte diagnose, elk zelfstandig draaibaar):
+
+```bash
+./deploy/local/smoke-announce.sh     # verwacht: "OK: moza is aangemeld ..."
+./deploy/local/smoke-services.sh     # verwacht: "OK: alle 14 services gezond ..."
+./deploy/local/publish-service.sh    # verwacht: "publish: klaar."
+./deploy/local/smoke-discover.sh     # verwacht: "SMOKE-DISCOVER GROEN."
+```
+
+Opruimen — het script gebruikt de compose-bestanden van de laatste start:
+
+```bash
+./deploy/local/up.sh down -v
+```
+
+> **Hosts-bestand niet nodig.** De SNI-hostnames (`directory.fsc-test.local`,
+> `moza.fsc-test.local`, `inway.moza.fsc-test.local`) resolven *binnen* het
+> docker-netwerk via de router-aliases. De UIs benader je via `localhost`-poorten hieronder.
+
+## Wat er opkomt
+
+- **postgres** — één instantie, per component een eigen database (`postgres-init.sql`):
+  `fsc_directory`, `fsc_moza`, `fsc_controller_moza`, `fsc_txlog_moza`.
+- **router** (haproxy) — SNI-passthrough op `:443` naar `manager-directory` en
+  `manager-moza`.
+- **manager-directory** + **directory-ui** (`http://localhost:8081`, geen login) — de lokale
+  FSC-directory (`AUTO_SIGN_GRANTS=servicePublication,delegatedServicePublication`). Host-poort
+  `8081` i.p.v. de standaard `8080`: de `magazijn-a`-harness (moza-poc-fbs-berichtenbox) bindt
+  `8080`/`8090` al lokaal, en beide harnessen moeten tegelijk kunnen draaien. Container-poort blijft `8080`. (Tegelijk draaien
+  lukt alleen onder bridge; zie [Podman zonder bridge-netwerk](#podman-zonder-bridge-netwerk).)
+- **migrate-moza**, **manager-moza** — de manager van de peer (announce, token- en
+  contractendpoints).
+- **migrate-controller-moza**, **controller-moza** (`http://localhost:8091`, zonder
+  login: `AUTHN_TYPE=none`) — dienst-beheer (contract-publicatie, delegatie). Host-poort `8091`
+  i.p.v. `8090`, zelfde reden als hierboven; container-poort blijft `8080`.
+- **migrate-txlog-moza**, **txlog-moza** — transactielog-API van de peer
+  (internal-PKI-mTLS).
+- **outway-moza** — client-egress: leest z'n contract-/service-config van de eigen
+  manager (internal-authenticated `:9443`) en logt uitgaande transacties bij txlog. Geen inbound
+  SNI-route (geen aangeboden dienst).
+- **inway-moza** — ingress-proxy: registreert zich bij de eigen controller (`:9443`) en
+  leest z'n config bij de eigen manager op de internal-**unauthenticated** poort (`:9444`) —
+  bewust anders dan de outway, die de authenticated `:9443` gebruikt (conform de bewezen
+  inway-config van de berichtenbox-peers). Eigen SNI-route op de router (`inway.moza.fsc-test.local`). Biedt
+  de stub-dienst `echo-service` aan (zie `publish-service.sh`), met `stub-upstream` als
+  `endpoint_url`.
+- **toolbox** — curl-client op het netwerk voor de mTLS-onboarding-calls: `publish-service.sh` en
+  `smoke-discover.sh` draaien hun curl-aanroepen via
+  `docker compose exec -T toolbox curl`.
+
+Geen OIDC-login-voorziening — dat blijft buiten scope voor deze harness (zie de sectie "Smoke"
+hieronder voor wat wél is aangetoond: announce, dienst-publicatie en discovery).
+
+## Smoke
+
+| Script | Bewijst |
+|--------|---------|
+| `smoke-announce.sh` | `moza` (OIN `00000000000000002000`) staat in `peers.peers` met een `manager_address` op `:443`. |
+| `smoke-services.sh` | Elke langlopende service draait en elke migrate-job is afgerond. |
+| `publish-service.sh` | `echo-service` is aangemaakt op de controller en gepubliceerd (servicePublication-contract, auto-signed). |
+| `smoke-discover.sh` | `echo-service` is vindbaar via de manager-mesh-API (`GET /v1/peers/{dir}/services`). |
+| `run-smokes.sh` | Draait alle vier in volgorde. |
+
+Afnemer-contracten (`serviceConnection`) en het écht dóór de inway heen aanroepen van
+`stub-upstream` (het data-pad) vallen buiten deze lokale proof (zie `deploy/zad/verify-zad.md`).
+
+**Waarom `smoke-services.sh` ernaast staat.** De overige smokes bewijzen het functionele
+eindresultaat via de API's, maar tonen de container-status zelf niet. De announce raakt maar een
+deel van de stack — de manager announce't ook prima terwijl outway, inway, controller en txlog
+crash-loopen, want die worden lui gedialed — en een inway die herhaaldelijk crasht en herstart
+vóórdat de poll in `publish-service.sh` slaagt, blijft eveneens onzichtbaar. Zo zou het
+geaccepteerde `:9444`-risico zich manifesteren: de inway gebruikt
+`MANAGER_INTERNAL_UNAUTHENTICATED_ADDRESS` (`:9444`), en als `fsc-inway serve` v2.5.2 tóch de
+authenticated `:9443` blijkt te eisen, faalt de boot daar zichtbaar terwijl de rest groen blijft.
+`smoke-services.sh` leest daarom de containerstatus uit en dumpt de laatste logregels van wat niet
+draait. Juist die componenten hernummert de hostnet-overlay van poort, dus een fout daarin moet
+luid falen.
+
+## Starten en modi
+
+`deploy/local/up.sh` start de harness in de modus die op deze machine werkt. De modus-logica staat in
+`lib/podman-modus.sh` (overgenomen uit moza-poc-fbs-berichtenbox, zie `lib/README.md`):
+
+| Modus | Wanneer | Compose-bestanden |
+|---|---|---|
+| `docker` | Docker-engine | `compose.yaml` |
+| `bridge` | podman met een werkend bridge-netwerk (Linux rootless, podman machine) | + `compose.podman.yaml` |
+| `hostnet` | podman zonder bruikbaar bridge-netwerk, bv. podman in een container | + `compose.podman.yaml` + `compose.podman-hostnet.yaml` |
+
+Zonder podman op PATH (en zonder `DOCKER_HOST` naar een podman-socket) wordt het `docker`. Onder
+podman zet het script eerst een probe-bridge met naamresolutie op en kijkt of podman healthchecks
+vanzelf uitvoert (zonder systemd gebeurt dat niet, en wacht de start eindeloos op postgres). Pas als
+een van beide niet lukt kiest het `hostnet` — buiten Linux nooit. `MODUS=<modus>` forceert. Kan de
+gekozen modus hier niet werken (`docker` op een podman-socket, `bridge` waar de probe-bridge faalt,
+`hostnet` buiten Linux of met `ip_unprivileged_port_start` boven 443, een compose die `!reset` niet
+kent), dan stopt het met de oorzaak in plaats van terug te vallen.
+
+```bash
+./deploy/local/up.sh                         # starten; wacht tot smoke-services.sh groen is
+./deploy/local/up.sh ps                      # status
+./deploy/local/up.sh compose logs -f router  # elk ander compose-commando
+./deploy/local/up.sh down -v                 # afbreken, inclusief volumes
+```
+
+De modus van de laatste start staat in `deploy/local/.modus`; `down`, `ps`, `compose` en een
+tweede `up` lezen hem terug, en een afwijkende `MODUS` wordt geweigerd. Zo kan geen
+vervolgcommando met een andere set bestanden de stack half omzetten. De harness vraagt `docker compose` (v2); met `docker-compose` of
+`podman-compose` stopt `up.sh` meteen.
+
+## Podman zonder bridge-netwerk
+
+Draait podman zélf in een container, dan kan netavark geen bridge opzetten (`failed to set
+autoconf sysctl: Permission denied` — `/proc/sys` is daar niet schrijfbaar) en ontbreekt
+`aardvark-dns`, waardoor geen enkele containernaam resolvet. De overlay
+`compose.podman-hostnet.yaml` laat alle containers dan de netns van de aanroeper delen. `up.sh`
+kiest hem zelf zodra de probe-bridge faalt; forceren kan ook:
+
+```bash
+MODUS=hostnet ./deploy/local/up.sh
+./deploy/local/run-smokes.sh
+```
+
+**Start, herstart en breek deze modus af via `up.sh`** (`up.sh compose restart …`, `up.sh compose
+up -d --force-recreate …`). Een compose-commando met één `-f` rendert de services opnieuw in
+de docker-modus, zonder keep-id en SELinux-labels, en onder podman faalt elke container dan op
+`/pki`; het script geeft steeds de drie bestanden mee. De smokes zijn wél veilig met één `-f`: die lezen alleen
+(`exec`, `logs`, `ps`, `config`) en hercreëren niets — `ps` en `exec` vinden de draaiende
+containers op projectnaam plus servicelabel, ongeacht met hoeveel `-f` ze gestart zijn.
+
+`!reset` vereist Compose **≥ 2.24.4**; oudere versies struikelen over de YAML-tag met een fout die
+niet naar de oorzaak wijst. `podman-compose` (mét streepje) ondersteunt het niet.
+
+Wat de overlay verandert — de poorten zijn container-listeners, niet host-publicaties:
+
+| | Bridge (basis) | Hostnet-overlay |
+|---|---|---|
+| Naamresolutie | netwerk-`aliases` | `extra_hosts` naar `127.0.0.1` |
+| Bind-adres | `0.0.0.0` in een eigen netns; twee poorten op `127.0.0.1` gepubliceerd | overal `127.0.0.1` |
+| manager directory | `8443` / `9443` / `9444` | `18443` / `19443` / `19444` |
+| manager moza | `8443` / `9443` / `9444` | `28443` / `9443` / `29444` |
+| controller | registratie `9443`, administratie `9444` | `39443`, administratie blijft `9444` |
+| txlog | `9443` | `49443` |
+| outway | `8443` | `58443` |
+| inway | `8443` | `8443` |
+| directory-UI | `8080`, host-poort `8081` | `8081` |
+| controller-UI | `8080`, host-poort `8091` | `8091` |
+| monitoring (alle componenten) | `8080` / `8081` | `18080`, `28080`, `38081`, `48081`, `58081`, `8444`, `8082` |
+| postgres | `5432`, onbereikbaar buiten het compose-netwerk | `5432` met `listen_addresses=127.0.0.1` |
+| postgres-healthcheck | aanwezig | vervalt; wachters op `service_started` |
+| `restart: on-failure` | onbegrensd | `on-failure:600` op elke service die het heeft |
+| router-config | `haproxy.cfg` (runtime-DNS) | `haproxy.podman-hostnet.cfg` (vaste adressen) |
+
+De UI's houden dus hun vertrouwde URL: wat onder bridge de host-poort was, is hier de
+container-poort. De interne manager-poort `9443` en de controller-administratie `9444` blijven
+bewust staan: `publish-service.sh` en `smoke-discover.sh` hebben die adressen als default, en de
+overlay houdt vrijwel dezelfde poortindeling aan als die van de berichtenbox-peers.
+
+Vijf beperkingen:
+
+- **Niet tegelijk met de hostnet-harness van een berichtenbox-peer.** Beide overlays gebruiken vrijwel dezelfde
+  poortindeling, dus ze botsen op bijna elke poort — niet alleen op `:443`. Onder bridge kan het
+  wel, want elk compose-project krijgt een eigen netwerk.
+- **De harness deelt de poortruimte met je machine.** Draait er al iets op `:5432`, dan faalt de
+  harness-postgres bij het binden en blijft hij `exited` — `smoke-services.sh` vlagt dat direct.
+  Hetzelfde geldt voor `:443` en de UI-poorten.
+- **De router bindt `:443`, dus de netns van de aanroeper moet
+  `net.ipv4.ip_unprivileged_port_start` op 0 hebben.** De per-container `sysctls`-regel uit de
+  basis vervalt hier: in een gedeelde netns mag een container die niet zetten. Controleer met
+  `sysctl net.ipv4.ip_unprivileged_port_start`. Staat hij op 1024, dan faalt de router op
+  `bind 127.0.0.1:443: Permission denied`; `up.sh` controleert dit vóór de start en stopt met
+  die oorzaak. De namen resolven dan nog wél — die komen hier uit
+  `extra_hosts`, niet van de router — maar elke `:443`-connection krijgt ECONNREFUSED en alle
+  smokes vallen om zonder dat de managerlogs een fout tonen. Zet je hem host-breed op 0, dan
+  mag voortaan elke onprivilegieerde gebruiker op die machine onder poort 1024 binden — draai dat
+  na afloop terug.
+- **Single-host.** Onder bridge publiceerde de router al geen host-poort, dus federatie met een
+  externe peer kon toen ook niet; deze overlay cementeert dat. Draai `127.0.0.1` niet terug naar
+  `0.0.0.0` om een multi-host-testnet te bouwen — dan zet je de hele stack, inclusief postgres en
+  de controller zonder authenticatie, op het netwerk.
+- **De containers worden op podman één voor één aangemaakt.** Met `userns_mode: keep-id` en een
+  storage-driver die lagen niet ID-mapped kan mounten (`vfs`, zoals in podman-in-een-container)
+  maakt podman per image-laag een ID-mapped kopie; tegelijk aangemaakte containers botsten daarop
+  met `container ID 0 cannot be mapped to a host ID`, en een volgende `up` naast de achtergebleven
+  `Created`-container gaf `write /proc/<pid>/uid_map: Operation not permitted`. `up.sh` haalt de
+  images daarom eerst parallel op en maakt daarna per service één container aan, in de volgorde
+  van de afhankelijkheden, vóór `up -d`. Zie je een van die
+  twee meldingen toch, ruim dan de achterblijvers op en start opnieuw:
+
+  ```bash
+  podman ps -a --format '{{.Names}} {{.Status}}' | grep -v ' Up ' | awk '{print $1}' \
+    | xargs -r podman rm -f
+  ```
+
+## Troubleshooting
+
+- **Container kan cert niet vinden** → controleer dat `pki/out/moza/<endpoint>/` en
+  `pki/internal/moza/<endpoint>/` bestaan (na `./pki/issue.sh`); paden moeten
+  matchen met de compose-env.
+- **`permission denied` op `key.pem` bij boot** → onder rootless podman: de stack
+  is buiten `up.sh` gestart, zonder `compose.podman.yaml`.
+  Anders: `HOST_UID`/`HOST_GID` in `deploy/local/.env` matchen niet met de eigenaar van de keys.
+  Zet ze met
+  `printf 'HOST_UID=%s\nHOST_GID=%s\n' "$(id -u)" "$(id -g)" >> deploy/local/.env` en
+  `./deploy/local/up.sh compose up -d --force-recreate`.
+- **`permission denied` op `/pki` of de haproxy-config terwijl rechten en UID kloppen** → SELinux
+  enforcing (Fedora, RHEL): een bind-mount heeft dan het label `:z` nodig. Dat staat op elke mount
+  in `compose.podman.yaml` (en in de overlays die een mount vervangen), en de overlay-guard in
+  moza-poc-fbs-berichtenbox eist het. Gestart zonder die overlay? Start via `up.sh`.
+- **Poort bezet** (8081, 8091) → stop de conflicterende dienst of pas de `ports`/`bind`
+  in `compose.yaml` / `haproxy.cfg` aan. De router publiceert geen host-poort
+  (SNI-passthrough intern op het compose-netwerk), dus `443` kan hier niet conflicteren — behalve
+  onder de hostnet-overlay, waar de hele stack de poortruimte van je machine deelt (zie
+  [Podman zonder bridge-netwerk](#podman-zonder-bridge-netwerk)).
+- **Smoke faalt** → `./deploy/local/up.sh compose logs
+  manager-directory manager-moza controller-moza` voor de mesh-logs. Blijft de announce-smoke
+  hangen op "nog niet aangemeld" terwijl de managers gezond loggen, controleer dan éérst
+  `./deploy/local/up.sh ps -a | grep router`: de `*.fsc-test.local`-namen zijn aliassen van de ROUTER,
+  dus zonder router vertrekt geen enkele announce en zie je in de managerlogs geen fout.
+- **Podman i.p.v. Docker** → de harness draait op beide, mits:
+  - Gebruik `docker compose` (v2), ook tegen een podman-socket; `up.sh` weigert elke andere
+    compose. `podman-compose` (mét streepje) is een losse herimplementatie die `depends_on:
+    condition:` en netwerk-`aliases:` niet volledig dekt — de managers starten dan vóór hun migraties en de peers vinden elkaar
+    niet op hun `*.fsc-test.local`-naam.
+  - De `router` heeft `sysctls: net.ipv4.ip_unprivileged_port_start=0` nodig: het haproxy-image
+    draait als non-root en podman zet die sysctl, anders dan Docker Desktop, niet op 0 → `bind
+    :443` faalt met `Permission denied`.
+  - `haproxy.cfg` gebruikt `parse-resolv-conf` in plaats van een vast nameserver-adres: Docker's
+    embedded DNS zit op `127.0.0.11`, podman's aardvark-dns op de netwerk-gateway. Met een hard
+    adres logt de router `<NOSRV>` en zijn alle backends onbereikbaar.
+  - `up.sh` stapelt `compose.podman.yaml` op de basis. Die overlay zet `userns_mode: "keep-id"`
+    op de cert-lezende services en `:z` op elke bind-mount. Rootless podman mapt host-UID 1000 op
+    container-UID 0; zonder keep-id is de UID uit `user:` een subuid die de 0600-privékeys niet
+    mag lezen, en faalt elke container die `/pki` mount bij boot. De regel staat bewust niet in de
+    basis: Docker accepteert alleen een lege `userns_mode` of `host` en weigert op `keep-id`.
+  - Geen bruikbaar bridge-netwerk (podman in een container)? Zie
+    [Podman zonder bridge-netwerk](#podman-zonder-bridge-netwerk) hierboven.
+- **`migrate-*` hangt / `database "…" does not exist`** → `postgres-init.sql` draait alleen bij
+  een **vers** volume. Bestaat er al een postgres-volume van een eerdere run? Maak de ontbrekende
+  DB eenmalig aan (`... exec -T postgres psql -U postgres -c "CREATE DATABASE <naam>;"`) of
+  `./deploy/local/up.sh down -v && ./deploy/local/up.sh` (wist alles, re-init inclusief nieuwe
+  DB's).
+
+## Cert-contract (referentie, overgenomen uit `pki/README.md`)
+
+De harness mount `pki/` read-only op `/pki`. Per endpoint (`manager`, `controller`, `outway`,
+`inway`, `txlog`) twee ketens:
+
+| Pad | Doel | Env |
+|-----|------|-----|
+| `/pki/ca/root.pem` | group-CA root (trust-anchor) | `TLS_GROUP_ROOT_CERT` |
+| `/pki/internal/<peer>/ca/root.pem` | **per-peer** internal-CA root | `TLS_ROOT_CERT`, `TLS_INTERNAL_UNAUTHENTICATED_ROOT_CERT` |
+| `/pki/out/<peer>/<endpoint>/{cert,key}.pem` | group-identity (hergebruikt voor token+contract) | `TLS_GROUP_CERT/KEY`, `TLS_GROUP_TOKEN_*`, `TLS_GROUP_CONTRACT_*` |
+| `/pki/internal/<peer>/<endpoint>/{cert,key}.pem` | internal mTLS | `TLS_CERT/KEY`, `TLS_INTERNAL_UNAUTHENTICATED_*` |
+
+`<peer>` ∈ {`directory`, `moza`}. De mesh verifieert de hostname niet (auth op OIN), maar
+houd de paden consistent met `SELF_ADDRESS`/SNI.
+
+De directory-peer heeft eigen CSR's onder `pki/peers/directory/`: `directory/csr.json`
+(gebruikt door `manager-directory` via `/pki/{out,internal}/directory/directory/...`; `directory-ui`
+gebruikt in plaats daarvan de group-cert van `moza/manager` als lezer-identiteit)
+en `manager/csr.json` (scaffolding voor een latere ZAD-directory-deploy; de lokale compose wiret
+het niet). Beide dragen de directory-OIN `00000000000000000010`. `issue.sh` negeert ongebruikte
+endpoints, dus de extra `manager`-CSR is onschadelijk.
+
+> **Let op:** de certs ontbreken tot `pki/issue.sh` gedraaid is (vereist `cfssl`). Zonder
+> gegenereerde certs faalt stap 1 van het draaiboek — genereer ze eerst.

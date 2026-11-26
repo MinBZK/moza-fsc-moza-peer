@@ -1,0 +1,20 @@
+{
+  "CN": "txlog.moza.fsc-test.local",
+  "key": {
+    "algo": "rsa",
+    "size": 4096
+  },
+  "hosts": [
+    "txlog.moza.fsc-test.local",
+    "moza-fsctxlog-fsc-moza-mfp-z64.rig.prd1.gn2.quattro.rijksapps.nl",
+    "fsc-moza-moza-fsctxlog",
+    "fsc-moza-moza-fsctxlog.rig-prd-mfp-z64.svc.cluster.local"
+  ],
+  "serialnumber": "00000000000000002000",
+  "names": [
+    {
+      "O": "MOZa",
+      "C": "NL"
+    }
+  ]
+}
